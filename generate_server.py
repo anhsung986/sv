@@ -1,11 +1,11 @@
+pip install openai
 import os
 import sys
 import time
 import random
 import requests
-from google import genai
-from google.genai import types
-from google.genai import errors as genai_errors
+import json
+from openai import OpenAI, RateLimitError, APIError
 from pydantic import BaseModel
 
 # Header User-Agent theo yêu cầu của Modrinth API (họ có thể chặn/rate-limit
@@ -24,15 +24,22 @@ def call_with_retry(func, *args, max_retries=5, base_delay=2, is_gemini=False, *
     for attempt in range(1, max_retries + 1):
         try:
             return func(*args, **kwargs)
-        except genai_errors.APIError as e:
-            status = getattr(e, "code", None) or getattr(e, "status_code", None)
-            is_429 = status == 429 or "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)
-            if is_gemini and is_429 and attempt < max_retries:
-                delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1)
-                print(f"⏳ Gemini rate limit (429). Thử lại lần {attempt}/{max_retries} sau {delay:.1f}s...")
-                time.sleep(delay)
-                continue
-            raise
+        except requests.exceptions.RequestException as e:
+            except RateLimitError:
+    if attempt < max_retries:
+        delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1)
+        print(f"⏳ OpenAI rate limit. Thử lại sau {delay:.1f}s...")
+        time.sleep(delay)
+        continue
+    raise
+
+except APIError:
+    if attempt < max_retries:
+        delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1)
+        print(f"⏳ OpenAI API lỗi. Thử lại sau {delay:.1f}s...")
+        time.sleep(delay)
+        continue
+    raise
         except requests.exceptions.RequestException as e:
             if attempt < max_retries:
                 delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1)
@@ -51,9 +58,9 @@ USER_IDEA = sys.argv[1]
 MC_VERSION = sys.argv[2]
 
 # Lấy API Key được giấu bảo mật trong GitHub Secrets
-GEMINI_API_KEY = os.environ.get("AI_API_KEY")
+OPENAI_API_KEY = os.environ.get("AI_API_KEY")
 
-if not GEMINI_API_KEY:
+if not OPENAI_API_KEY:
     print("Lỗi: Không tìm thấy AI_API_KEY trong môi trường.")
     sys.exit(1)
 
@@ -63,7 +70,7 @@ os.makedirs("plugins", exist_ok=True)
 print(f"🤖 Đang phân tích ý tưởng: '{USER_IDEA}' cho phiên bản MC {MC_VERSION}...")
 
 # Khởi tạo Gemini Client
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # 1. Định nghĩa cấu trúc JSON bắt buộc AI phải trả về dựa trên Pydantic
 class PluginRecommendation(BaseModel):
@@ -83,34 +90,59 @@ BẮT BUỘC: Điền chính xác 'plugin_slug' (tên viết liền, không dấ
 
 # 3. Gọi Gemini AI xử lý cấu trúc đầu ra (có retry khi bị 429)
 try:
-    response = call_with_retry(
-        client.models.generate_content,
-        model='gemini-2.0-flash',
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=AIResponseStructure,
-        ),
-        is_gemini=True,
-    )
+response = call_with_retry(
+    client.responses.create,
+    model="gpt-5-mini",
+    input=prompt,
+    text={
+        "format": {
+            "type": "json_schema",
+            "name": "plugins",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "plugins": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "plugin_slug": {
+                                    "type": "string"
+                                },
+                                "reason": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "plugin_slug",
+                                "reason"
+                            ],
+                            "additionalProperties": False
+                        }
+                    }
+                },
+                "required": [
+                    "plugins"
+                ],
+                "additionalProperties": False
+            }
+        }
+    }
+)
+
+data = json.loads(response.output_text)
+recommended_plugins = data["plugins"]
 
     # Giải mã dữ liệu JSON nhận được từ AI
     import json
     data = json.loads(response.text)
     recommended_plugins = data.get("plugins", [])
-except genai_errors.APIError as e:
-    status = getattr(e, "code", None) or getattr(e, "status_code", None)
-    if status == 429 or "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-        print("❌ Đã bị Google Gemini giới hạn tốc độ (429) sau nhiều lần thử lại.")
-        print("   Nguyên nhân thường gặp: dùng API key free-tier chạm quota RPM/RPD,")
-        print("   hoặc nhiều workflow chạy song song dùng chung 1 key.")
-        print("   Gợi ý: giãn cách các lần chạy workflow, nâng cấp gói trả phí,")
-        print("   hoặc dùng nhiều key xoay vòng (round-robin) qua GitHub Secrets.")
-    else:
-        print(f"❌ Lỗi khi gọi API Gemini: {str(e)}")
+except RateLimitError:
+    print("❌ OpenAI hết quota hoặc bị giới hạn tốc độ.")
     sys.exit(1)
-except Exception as e:
-    print(f"❌ Lỗi khi gọi API Gemini: {str(e)}")
+
+except APIError as e:
+    print(f"❌ Lỗi OpenAI: {e}")
     sys.exit(1)
 
 # Hàm tự động tìm và tải file từ Modrinth
