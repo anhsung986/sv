@@ -1,4 +1,3 @@
-pip install openai
 import os
 import sys
 import time
