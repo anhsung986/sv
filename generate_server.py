@@ -1,4 +1,5 @@
 import os
+from pydantic import BaseModel
 import sys
 import json
 import requests
@@ -30,11 +31,11 @@ print(f"🤖 Đang phân tích ý tưởng: '{USER_IDEA}' cho phiên bản MC {M
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Định nghĩa cấu trúc JSON bắt buộc AI phải trả về để code dễ đọc
-class PluginRecommendation(types.BaseModel):
+class PluginRecommendation(BaseModel):
     plugin_slug: str
     reason: str
 
-class AIResponseStructure(types.BaseModel):
+class AIResponseStructure(BaseModel):
     plugins: list[PluginRecommendation]
 
 prompt = f"""
