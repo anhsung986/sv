@@ -61,7 +61,11 @@
             
             // LƯU Ý: Đoạn này cần một GitHub Personal Access Token (PAT) có quyền 'repo' hoặc 'workflow'
             // Để test nhanh bạn có thể dán tạm token vào đây (nhưng đừng public lộ token nhé!)
-            const TOKEN = "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"; 
+            const TOKEN = prompt(" bạn vào đây để xác thực:");
+            if (!TOKEN) {
+                alert("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");
+                return;
+            }
 
             try {
                 const response = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/dispatches`, {
