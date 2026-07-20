@@ -19,7 +19,7 @@ jobs:
 
     - name: Cài đặt các thư viện cần thiết
       run: |
-        pip install google-genai requests
+        pip install openai requests pydantic
 
     - name: Chạy Script AI để chọn và tải Plugin
       env:
